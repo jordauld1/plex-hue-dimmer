@@ -1,0 +1,17 @@
+# Configure in .env (see .env.example). Plex must be able to reach the
+# webhook port; the default binds it to this machine only, which suits a
+# Plex server running on the same host.
+services:
+  plex-hue-dimmer:
+    build: .
+    restart: unless-stopped
+    user: "${UID_GID:-1000:1000}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    env_file:
+      - .env
+    ports:
+      - "${BIND:-127.0.0.1}:${PORT:-8095}:${PORT:-8095}"
+    volumes:
+      - ./data:/data
