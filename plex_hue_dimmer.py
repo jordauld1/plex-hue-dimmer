@@ -28,8 +28,10 @@ log = logging.getLogger("plex-hue-dimmer")
 # dimmer switch (about 15-20% per step) always counts as a manual change.
 TOLERANCE = 2.0
 
-# After a fade ends, give the bridge a moment before its readings must match.
-FADE_SLACK = 1.0
+# The bridge's readings trail the light itself by a few seconds: 3s after a
+# 2s fade from 15% to 50% has been seen to still read 42%. Until this long
+# after a fade ends, any reading along the fade's path still counts as ours.
+FADE_SLACK = 10.0
 
 PLAYING, PAUSED = "playing", "paused"
 
@@ -53,7 +55,7 @@ class Config:
     dim_level: float = 15
     pause_level: float = 50
     pause_delay: float = 5
-    stop_delay: float = 0
+    stop_delay: float = 3
     finished_delay: float = 15
     dim_transition: float = 3
     pause_transition: float = 2
@@ -75,7 +77,7 @@ class Config:
             dim_level=_env_float("DIM_LEVEL", 15),
             pause_level=_env_float("PAUSE_LEVEL", 50),
             pause_delay=_env_float("PAUSE_DELAY", 5),
-            stop_delay=_env_float("STOP_DELAY", 0),
+            stop_delay=_env_float("STOP_DELAY", 3),
             finished_delay=_env_float("FINISHED_DELAY", 15),
             dim_transition=_env_float("DIM_TRANSITION", 3),
             pause_transition=_env_float("PAUSE_TRANSITION", 2),
@@ -301,8 +303,13 @@ class Dimmer:
                     log.warning("Couldn't set %s: %s", name, e)
                     continue
                 log.info("%s: %.0f%% -> %.0f%% (%s)", name, bri, level, mode)
-            held["set"] = level
-            held["until"] = time.time() + transition + FADE_SLACK
+            # Remember the span this fade covers. If the previous fade's
+            # readings may still be arriving, its span counts too.
+            now = time.time()
+            lo, hi = min(bri, level), max(bri, level)
+            if now < held.get("until", 0):
+                lo, hi = min(lo, held.get("lo", lo)), max(hi, held.get("hi", hi))
+            held.update(set=level, lo=lo, hi=hi, until=now + transition + FADE_SLACK)
         if mode == "idle":
             self.owned.clear()
         self.mode = mode
@@ -311,9 +318,11 @@ class Dimmer:
     def _still_ours(held, on, bri):
         if not on:
             return False
-        if time.time() < held.get("until", 0):
-            return True  # mid-fade; the reading may not have caught up yet
-        return abs(bri - held.get("set", held["orig"])) <= TOLERANCE
+        if abs(bri - held.get("set", held["orig"])) <= TOLERANCE:
+            return True
+        # Mid-fade, or the bridge hasn't caught up yet: fine if it's on the way.
+        return (time.time() < held.get("until", 0)
+                and held.get("lo", 0) - TOLERANCE <= bri <= held.get("hi", 100) + TOLERANCE)
 
     # -- persistence ----------------------------------------------------------
     # A restart mid-movie must not forget the brightness to restore.

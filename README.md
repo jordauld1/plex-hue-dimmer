@@ -8,7 +8,7 @@ The lights should behave as if someone thoughtful were working the dimmer.
 Nothing jumps, nothing flickers, and nothing undoes what you set by hand.
 
 - **Stop means stop.** Stop something part-way through and the lights come
-  straight back up.
+  back up within a few seconds.
 - **Autoplay is seamless.** When an episode plays to the end, the lights wait
   (15s by default) before coming back up. If the next episode starts in that
   window, they never move. The service can tell these two kinds of stop apart
@@ -44,6 +44,9 @@ The lights follow the combined state of the players you choose:
 
 Before every change the service reads each light. If it doesn't match what
 the service last set, someone else changed it, and the service lets that light go.
+The bridge's readings trail the light by a few seconds, so for a short while
+after a fade, a reading anywhere along the fade's path still counts as the
+service's own.
 
 Webhooks only reach the service for movies and episodes on the players you list,
 so music, trailers and other rooms don't touch your lights.
@@ -100,7 +103,7 @@ Every setting lives in `.env` and is documented in
 | `DIM_LEVEL` | 15 | Brightness % while playing |
 | `PAUSE_LEVEL` | 50 | Brightness % while paused |
 | `PAUSE_DELAY` | 5 | Seconds paused before brightening |
-| `STOP_DELAY` | 0 | Seconds after a part-way stop before restoring |
+| `STOP_DELAY` | 3 | Seconds after a part-way stop before restoring. Plex's jump to the next episode from the credits arrives about 2s after the stop |
 | `FINISHED_DELAY` | 15 | Seconds after something finishes before restoring. Must be longer than the gap before the next episode autoplays; that gap can reach about 12s after a 10s countdown |
 | `*_TRANSITION` | 2–4 | Fade durations, in seconds |
 

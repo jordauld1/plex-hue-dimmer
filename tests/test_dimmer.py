@@ -65,6 +65,11 @@ class DimmerTest(unittest.IsolatedAsyncioTestCase):
     async def wait(self, seconds):
         await asyncio.sleep(seconds)
 
+    def readings_settle(self):
+        """Time passes: the bridge has caught up with every fade so far."""
+        for held in self.dimmer.owned.values():
+            held["until"] = 0
+
     async def test_play_dims_and_stop_restores_straight_away(self):
         await self.dimmer.handle("media.play", TV)
         self.assertEqual((self.bri("a"), self.bri("b")), (15, 15))
@@ -170,6 +175,7 @@ class DimmerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_next_item_redims_a_light_turned_up_by_hand(self):
         await self.dimmer.handle("media.play", TV)
+        self.readings_settle()
         self.hue.touch("a", True, 60.0)
         await self.dimmer.handle("media.stop", TV)
         await self.dimmer.handle("media.play", TV)
@@ -203,6 +209,51 @@ class DimmerTest(unittest.IsolatedAsyncioTestCase):
         await self.dimmer.expire_stale()
         await self.wait(0.15)
         self.assertEqual(self.bri("a"), 80)
+
+
+class LaggingReadingsTest(DimmerTest):
+    """The bridge's readings trail the light, so mid-fade values aren't hand changes."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        plex_hue_dimmer.FADE_SLACK = 10
+
+    async def asyncTearDown(self):
+        plex_hue_dimmer.FADE_SLACK = 0
+        await super().asyncTearDown()
+
+    async def test_resume_mid_fade_keeps_both_lights(self):
+        await self.dimmer.handle("media.play", TV)
+        await self.dimmer.handle("media.pause", TV)
+        await self.wait(0.08)
+        self.hue.touch("b", True, 42.0)  # still on its way from 15 to 50
+        await self.dimmer.handle("media.resume", TV)
+        self.assertEqual((self.bri("a"), self.bri("b")), (15, 15))
+        await self.dimmer.handle("media.stop", TV)
+        await self.wait(0.01)
+        self.assertEqual((self.bri("a"), self.bri("b")), (80, 100))
+
+    async def test_late_reading_from_an_earlier_fade_is_ours(self):
+        await self.dimmer.handle("media.play", TV)
+        await self.dimmer.handle("media.pause", TV)
+        await self.wait(0.08)
+        await self.dimmer.handle("media.resume", TV)
+        self.hue.touch("b", True, 50.0)  # the pause fade's reading arrives late
+        await self.dimmer.handle("media.pause", TV)
+        await self.wait(0.08)
+        await self.dimmer.handle("media.stop", TV)
+        await self.wait(0.01)
+        self.assertEqual(self.bri("b"), 100)
+
+    async def test_hand_change_off_the_fade_path_still_counts(self):
+        await self.dimmer.handle("media.play", TV)
+        self.readings_settle()
+        await self.dimmer.handle("media.pause", TV)
+        await self.wait(0.08)
+        self.hue.touch("b", True, 100.0)  # fading 15 -> 50; 100 is someone's hand
+        await self.dimmer.handle("media.resume", TV)
+        self.assertEqual(self.bri("b"), 100)
+        self.assertNotIn("b", self.dimmer.owned)
 
 
 class RecordingDimmer:
